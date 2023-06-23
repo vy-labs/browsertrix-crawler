@@ -135,6 +135,7 @@ export class Crawler {
     this.behaviorLastLine = null;
 
     this.browser = new Browser();
+    this.MAX_REDIS_TRIES = 3;
   }
 
   configureUA() {
@@ -178,13 +179,17 @@ export class Crawler {
     }
 
     let broadCrawlRedis;
+    let redis_tries = 0;
     while (true) {
       try {
         broadCrawlRedis = await initBroadCrawlRedis();
+        redis_tries = redis_tries + 1;
         break;
       } catch (e) {
-        //logger.fatal("Unable to connect to state store Redis: " + redisUrl);
-        logger.warn("Waiting for redis at broadcrawl", {}, "state");
+        if(redis_tries >= this.MAX_REDIS_TRIES) {
+          logger.fatal("Unable to connect to state store Redis: " + redisUrl);
+        }
+        logger.warn("Waiting for redis at broad crawl", {}, "state");
         await sleep(3);
       }
     }
@@ -827,18 +832,9 @@ export class Crawler {
   }
 
   async uploadToS3(filePath) {
-    // Configure AWS credentials
-    const credentials  = {
-      accessKeyId: process.env.STORE_ACCESS_KEY,
-      secretAccessKey: process.env.STORE_SECRET_KEY,
-      sessionToken: process.env.SESSION_TOKEN
-    };
-
-    // Create an S3 client
-    AWS.config.update({ credentials });
     const s3 = new AWS.S3();
     // Define the bucket name and file path
-    const bucketName = process.env.STORE_PATH;
+    const bucketName = process.env.BUCKET_NAME;
 
     let collectionDirectory = path.dirname(filePath);
     let logDirectoryPath = path.join(collectionDirectory, "logs", "");
@@ -900,7 +896,6 @@ export class Crawler {
 
   async postCrawl(done=false) {
     if (this.params.combineWARC) {
-      // await this.combineWARC();
       let warcFilePath = await this.combineWARC();
       if(done)
         await this.uploadToS3(warcFilePath);

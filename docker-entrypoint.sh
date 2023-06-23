@@ -1,5 +1,7 @@
 #!/bin/bash
 
+echo "In docker entry point"
+
 # Get UID/GID from volume dir
 
 VOLUME_UID=$(stat -c '%u' /crawls)
@@ -14,6 +16,7 @@ MY_GID=$(id -g)
 # btrix with the same UID/GID of the /crawls dir and run as that user instead.
 
 if [ "$MY_GID" != "$VOLUME_GID" ] || [ "$MY_UID" != "$VOLUME_UID" ]; then
+    echo "not matching ids $@"
     groupadd btrix
     groupmod -o --gid $VOLUME_GID btrix
 
@@ -21,6 +24,7 @@ if [ "$MY_GID" != "$VOLUME_GID" ] || [ "$MY_UID" != "$VOLUME_UID" ]; then
     usermod -o -u $VOLUME_UID btrix > /dev/null
     su btrix -c '"$@"' -- argv0-ignore "$@"
 else
+    echo "executing $@"
     exec "$@"
 fi
 
