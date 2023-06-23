@@ -24,6 +24,6 @@ server:
   workers: 3
   scopeType: page
   waitUntil: load,networkidle0
-  timeout: 1000
-  behaviorTimeout: 1000
+  timeout: 30
+  behaviorTimeout: 30
   logging: stats,pywb
