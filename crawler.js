@@ -835,11 +835,11 @@ export class Crawler {
     const s3 = new AWS.S3();
     // Define the bucket name and file path
     const bucketName = process.env.BUCKET_NAME;
+    logger.info("bucket name: " + bucketName);
 
     let collectionDirectory = path.dirname(filePath);
     let logDirectoryPath = path.join(collectionDirectory, "logs", "");
     let prefixKey = `${process.env.ENVIRONMENT}/${this.params.domain}/level_${this.params.level}/${this.params.crawlId}/${this.current_date}/`;
-
 
     fs.readdir(logDirectoryPath, async (err, files) => {
       if (err) {
