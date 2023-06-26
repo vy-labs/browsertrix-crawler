@@ -60,6 +60,7 @@ class Logger
     data["url"] = this.params.url;
     data["level"] = this.params.level;
     data["retry"] = this.params.retry;
+    data["crawlId"] = this.params.id;
 
     if (this.logLevels.length) {
       if (this.logLevels.indexOf(logLevel) < 0) {
