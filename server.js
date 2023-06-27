@@ -15,7 +15,7 @@ let fixedArgs = createArgsFromYAML();
 app.post("/crawl", (req, res) => {
   try {
     const reqDict = {...req.body};
-    const requiredKeys = ["url", "collection", "id", "domain", "level"];
+    const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
     const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
     if (missingKeys.length === 0) {
       const args = [
@@ -23,7 +23,8 @@ app.post("/crawl", (req, res) => {
         "--domain", reqDict.domain,
         "--level", String(reqDict.level),
         "--collection", String(reqDict.collection),
-        "--id", String(reqDict.id)
+        "--id", String(reqDict.id),
+        "--retry",reqDict.retry
       ];
       args.push(...fixedArgs);
 

@@ -1,3 +1,5 @@
+import { parseArgs } from "./argParser.js";
+
 // ===========================================================================
 // to fix serialization of regexes for logging purposes
 RegExp.prototype.toJSON = RegExp.prototype.toString;
@@ -19,6 +21,8 @@ class Logger
     this.logLevels = [];
     this.contexts = [];
     this.crawlState = null;
+    const res = parseArgs();
+    this.params = res.parsed;
   }
 
   setExternalLogStream(logFH) {
@@ -51,6 +55,12 @@ class Logger
     } else if (typeof data !== "object") {
       data = {"message": data.toString()};
     }
+
+    data["domain"] = this.params.domain;
+    data["url"] = this.params.url;
+    data["level"] = this.params.level;
+    data["retry"] = this.params.retry;
+    data["crawlId"] = this.params.id;
 
     if (this.logLevels.length) {
       if (this.logLevels.indexOf(logLevel) < 0) {
