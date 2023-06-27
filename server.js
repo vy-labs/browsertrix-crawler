@@ -15,9 +15,13 @@ let fixedArgs = createArgsFromYAML();
 app.post("/crawl", (req, res) => {
   try {
     const reqDict = {...req.body};
-    const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
+    const requiredKeys = ["url", "collection", "id", "domain", "level", "retry", "proxy"];
     const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
     if (missingKeys.length === 0) {
+      if(Object.keys(reqDict.proxy).length === 0){
+        process.env.SOCKS_HOST = reqDict.proxy.ip_address;
+        process.env.SOCKS_PORT = reqDict.proxy.port;
+      }
       const args = [
         "--url", reqDict.url,
         "--domain", reqDict.domain,
