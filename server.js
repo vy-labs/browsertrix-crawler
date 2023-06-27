@@ -24,7 +24,7 @@ app.post("/crawl", (req, res) => {
         "--level", String(reqDict.level),
         "--collection", String(reqDict.collection),
         "--id", String(reqDict.id),
-        "--retry",reqDict.retry
+        "--retry", reqDict.retry
       ];
       args.push(...fixedArgs);
 

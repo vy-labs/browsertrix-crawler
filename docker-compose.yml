@@ -5,6 +5,9 @@ services:
         build:
           context: ./
         platform: linux/amd64
+        command: "node /app/server.js"
+        volumes:
+          - ~/crawls:/crawls
         cap_add:
           - NET_ADMIN
           - SYS_ADMIN
