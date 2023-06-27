@@ -135,6 +135,7 @@ export class Crawler {
 
     this.browser = new Browser();
     this.MAX_REDIS_TRIES = 3;
+    this.redirection_string = null;
   }
 
   configureUA() {
@@ -335,7 +336,8 @@ export class Crawler {
           domain: this.params.domain,
           level: this.params.level,
           s3Path: this.s3FilePath,
-          retry: this.params.retry
+          retry: this.params.retry,
+          redirection_chain: this.redirection_string
         }));
       }else{
         await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
@@ -1202,6 +1204,9 @@ export class Crawler {
 
       isHTMLPage = this.isHTMLContentType(contentType);
 
+      this.redirection_string = await this.buildRedirectionChain(resp);
+      logger.info("redirection chain :" + this.redirection_string);
+
     } catch (e) {
       let msg = e.message || "";
       if (!msg.startsWith("net::ERR_ABORTED") || !ignoreAbort) {
@@ -1275,6 +1280,16 @@ export class Crawler {
       }
       await this.queueInScopeUrls(seedId, parsedLinks, depth, extraHops, logDetails);
     }
+  }
+
+  async buildRedirectionChain(response) {
+    const chain = response.request().redirectChain();
+    const redirection_chain = [];
+    for(const url_object of chain) {
+      redirection_chain.push(url_object.url());
+    }
+    redirection_chain.push(response.url());
+    return `[${redirection_chain.join(",")}]`;
   }
 
   async netIdle(page, details) {
