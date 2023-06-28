@@ -21,7 +21,7 @@ app.post("/crawl", (req, res) => {
       const args = [
         "--url", reqDict.url,
         "--domain", reqDict.domain,
-        "--level", String(reqDict.level),
+        "--level", reqDict.level,
         "--collection", String(reqDict.collection),
         "--id", String(reqDict.id),
         "--retry", reqDict.retry
