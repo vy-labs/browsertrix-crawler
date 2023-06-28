@@ -64,6 +64,17 @@ export class Crawler {
     this.collDir = path.join(this.params.cwd, "collections", this.params.collection);
     this.logDir = path.join(this.collDir, "logs");
     this.logFilename = path.join(this.logDir, `crawl-${new Date().toISOString().replace(/[^\d]/g, "")}.log`);
+    const syslogDir = "/var/log";
+    this.syslogFilename = path.join(syslogDir, "syslog");
+
+    try {
+      if (!fs.existsSync(this.syslogFilename)) {
+        fs.writeFileSync(this.syslogFilename, "");
+      }
+    } catch (err) {
+      logger.error("Error creating log file:", err);
+    }
+
 
     const debugLogging = this.params.logging.includes("debug");
     logger.setDebugLogging(debugLogging);
@@ -245,6 +256,9 @@ export class Crawler {
     this.logFH = fs.createWriteStream(this.logFilename);
     logger.setExternalLogStream(this.logFH);
 
+    this.syslogFH = fs.createWriteStream(this.syslogFilename);
+    logger.setSysLogStream(this.syslogFH);
+
     this.infoString = await this.getInfoString();
     logger.info(this.infoString);
 
@@ -372,6 +386,21 @@ export class Crawler {
         await this.crawlState.setStatus(status);
       }
 
+      const uploadFilesInDirectory = async (directory) => {
+        if (!fs.existsSync(directory)) {
+          return;
+        }
+
+        for (const file of fs.readdirSync(directory)) {
+          const filePath = path.join(directory, file);
+          const fileName = path.basename(filePath);
+          if (!fileName.startsWith("crawl")) {
+            await this.uploadToS3(filePath, fileName);
+          }
+        }
+      };
+      await uploadFilesInDirectory(this.logDir);
+      await uploadFilesInDirectory(this.pagesDir);
       this.removeCollection(this.collDir);
 
       process.exit(exitCode);
@@ -844,7 +873,7 @@ export class Crawler {
     await this.postCrawl(true);
   }
 
-  async uploadToS3(filePath) {
+  async uploadToS3(filePath, filename) {
     const s3 = new AWS.S3();
     // Define the bucket name and file path
     const bucketName = process.env.BUCKET_NAME;
@@ -855,7 +884,7 @@ export class Crawler {
     // Set the parameters for the S3 upload
     const params = {
       Bucket: bucketName,
-      Key: `${prefixKey}${this.params.crawlId}.warc.gz`, // Specify the desired destination file name in the bucket
+      Key: `${prefixKey}${filename}`, // Specify the desired destination file name in the bucket
       Body: fs.createReadStream(filePath),
     };
 
@@ -872,7 +901,7 @@ export class Crawler {
 
   removeCollection(directoryPath) {
     // Directories to exclude from deletion
-    const directoriesToExclude = ["logs", "pages"];
+    const directoriesToExclude = [];
 
     // Function to recursively delete a directory and its contents
     const deleteDirectory = (directory) => {
@@ -928,7 +957,7 @@ export class Crawler {
     if (this.params.combineWARC) {
       let warcFilePath = await this.combineWARC();
       if(done)
-        await this.uploadToS3(warcFilePath);
+        await this.uploadToS3(warcFilePath, `${this.params.crawlId}.warc.gz`);
     }
 
     if (this.params.generateCDX) {
@@ -970,8 +999,10 @@ export class Crawler {
   async closeLog() {
     // close file-based log
     logger.setExternalLogStream(null);
+    logger.setSysLogStream(null);
     try {
       await new Promise(resolve => this.logFH.close(() => resolve()));
+      await new Promise(resolve => this.syslogFH.close(() => resolve()));
     } catch (e) {
       // ignore
     }
