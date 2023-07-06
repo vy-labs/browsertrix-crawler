@@ -61,6 +61,7 @@ process.on("SIGUSR2", () => {
   }
 });
 
+console.log("main.js");
 crawler = new Crawler();
 crawler.run();
 

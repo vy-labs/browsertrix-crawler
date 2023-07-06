@@ -66,13 +66,11 @@ export class Crawler {
     this.logFilename = path.join(this.logDir, `crawl-${new Date().toISOString().replace(/[^\d]/g, "")}.log`);
     const syslogDir = "/var/log";
     this.syslogFilename = path.join(syslogDir, "syslog");
+    console.log("crawler constructor");
 
-    try {
-      if (!fs.existsSync(this.syslogFilename)) {
-        fs.writeFileSync(this.syslogFilename, "");
-      }
-    } catch (err) {
-      logger.error("Error creating log file:", err);
+
+    if (!fs.existsSync(this.syslogFilename)) {
+      fs.writeFileSync(this.syslogFilename, "");
     }
 
 
@@ -170,7 +168,8 @@ export class Crawler {
   }
 
   async initCrawlState() {
-    const redisUrl = "redis://localhost:6379/0";
+    const redisUrl = `redis://localhost:6379/${this.params.redis_db}`;
+    logger.info("redis_url",redisUrl);
 
     if (!redisUrl.startsWith("redis://")) {
       logger.fatal("stateStoreUrl must start with redis:// -- Only redis-based store currently supported");
@@ -299,7 +298,9 @@ export class Crawler {
 
     subprocesses.push(child_process.spawn("redis-server", {cwd: "/tmp/", stdio: redisStdio}));
 
-    opts.env = {...process.env, COLL: this.params.collection, ROLLOVER_SIZE: this.params.rolloverSize};
+    logger.info("PYWB_PORT",this.params.pywb_http_socket);
+
+    opts.env = {...process.env, COLL: this.params.collection, ROLLOVER_SIZE: this.params.rolloverSize, HTTP_SOCKET: this.params.pywb_http_socket, SOCKET: this.params.pywb_socket};
 
     subprocesses.push(child_process.spawn("uwsgi", [new URL("uwsgi.ini", import.meta.url).pathname], opts));
 
@@ -317,7 +318,7 @@ export class Crawler {
         "-listen",
         "tcp",
         "-screen",
-        "0",
+        this.params.xvfb_screen,
         process.env.GEOMETRY,
         "-ac",
         "+extension",
@@ -335,12 +336,12 @@ export class Crawler {
   }
 
   async run() {
-    await this.bootstrap();
 
     let status;
     let exitCode = 0;
-
     try {
+      await this.bootstrap();
+
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
       if(!this.interrupted || this.s3FilePath){
@@ -401,6 +402,7 @@ export class Crawler {
       };
       await uploadFilesInDirectory(this.logDir);
       await uploadFilesInDirectory(this.pagesDir);
+      logger.info("removing now");
       this.removeCollection(this.collDir);
 
       process.exit(exitCode);
@@ -874,6 +876,8 @@ export class Crawler {
   }
 
   async uploadToS3(filePath, filename) {
+    console.log("FILE_PATH",filePath);
+    console.log("FILE_NAME",filename);
     const s3 = new AWS.S3();
     // Define the bucket name and file path
     const bucketName = process.env.BUCKET_NAME;
@@ -895,6 +899,7 @@ export class Crawler {
       logger.info("File uploaded successfully:", result.Location);
       // remove  collection on successful upload TODO
     } catch (e){
+      this.interrupted = true;
       logger.error("error",e);
     }
   }
@@ -950,7 +955,7 @@ export class Crawler {
     };
 
     // Call the function to delete all files and subdirectories within the main directory, excluding specific directories
-    deleteFilesAndSubdirectories(directoryPath);
+    // deleteFilesAndSubdirectories(directoryPath);
   }
 
   async postCrawl(done=false) {
@@ -1245,6 +1250,7 @@ export class Crawler {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
             if (failCrawlOnError) {
               await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
+              this.removeCollection(this.collDir);
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
               logger.error("Page Load Timeout, skipping page", {msg, ...logDetails});
@@ -1257,6 +1263,7 @@ export class Crawler {
         } else {
           if (failCrawlOnError) {
             await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
+            this.removeCollection(this.collDir);
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
             logger.error("Page Load Error, skipping page", {msg, ...logDetails});
