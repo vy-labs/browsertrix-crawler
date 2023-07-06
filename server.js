@@ -17,6 +17,7 @@ app.post("/crawl", (req, res) => {
     const reqDict = {...req.body};
     const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
     const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
+    console.log("crawl starting");
     if (missingKeys.length === 0) {
       const args = [
         "--url", reqDict.url,
@@ -24,10 +25,30 @@ app.post("/crawl", (req, res) => {
         "--level", reqDict.level,
         "--collection", String(reqDict.collection),
         "--id", String(reqDict.id),
-        "--retry", reqDict.retry
+        "--retry", reqDict.retry,
+        "--pywb_http_socket", ":8080",
+        "--pywb_socket", ":8081",
+        "--xvfb_screen", "0",
+        "--redis_db",0
       ];
       args.push(...fixedArgs);
 
+      const secondaryArgs = [
+        "--url", "https://www.google.com/",
+        "--domain", "google.com",
+        "--level", 0,
+        "--collection", "google",
+        "--id", "randomId",
+        "--retry", 0,
+        "--pywb_http_socket", ":8082",
+        "--pywb_socket", ":8083",
+        "--xvfb_screen", "1",
+        "--redis_db",1
+      ];
+      secondaryArgs.push(...fixedArgs);
+
+      child_process.spawn("crawl", secondaryArgs, {stdio: "inherit"});
+      console.log("starting");
       crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
       res.status(200).json({info: `${reqDict.url} crawl finished`});
     } else {

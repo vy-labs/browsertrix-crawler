@@ -29,8 +29,14 @@ console.error = function (...args) {
   error.call(console, ...args);
 };
 
-export async function initRedis(url) {
-  const redis = new Redis(url, {lazyConnect: true});
+export async function initRedis(url, redisStdio) {
+  const redis = new Redis(
+    url,
+    {
+      lazyConnect: true,
+      stdio: redisStdio
+    }
+  );
   await redis.connect();
   return redis;
 }
