@@ -1,5 +1,3 @@
-import express from "express";
-import bodyParser from "body-parser";
 import child_process from "child_process";
 import yaml from "js-yaml";
 import fs from "fs";
@@ -9,13 +7,12 @@ import {sleep} from "./util/timing.js";
 import {RedisHelper} from "./util/redisHelper.js";
 import md5 from "md5";
 import { v4 as uuidv4 } from "uuid";
+import {initRedis} from "./util/redis.js";
+import {CRAWLER_STATE_KEY} from "./constants.js";
 
-const app = express();
-const port = 3000;
 const MAX_REDIS_TRIES = 3;
 const EVENT_QUEUE = "test_queue:start_urls";
 
-app.use(bodyParser.json());
 
 let crawlProcess = null;
 let fixedArgs = createArgsFromYAML();
@@ -56,7 +53,11 @@ let fixedArgs = createArgsFromYAML();
       "--retry", retry
     ];
     args.push(...fixedArgs);
-    crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
+    const crawlProcess = child_process.spawnSync("crawl", args, { stdio: "inherit" });
+    const exitCode = crawlProcess.status;
+    console.log(`exitCode: ${exitCode}`);
+
+    sendEventsBasedOnExitCode(exitCode);
   }
 })();
 
@@ -64,38 +65,12 @@ function calculateMd5Hash(string) {
   return md5(string);
 }
 
-
-// app.post("/crawl", (req, res) => {
-//   try {
-//     const reqDict = {...req.body};
-//     const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
-//     const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
-//     if (missingKeys.length === 0) {
-//       const args = [
-//         "--url", reqDict.url,
-//         "--domain", reqDict.domain,
-//         "--level", reqDict.level,
-//         "--collection", String(reqDict.collection),
-//         "--id", String(reqDict.id),
-//         "--retry", reqDict.retry
-//       ];
-//       args.push(...fixedArgs);
-//
-//       crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
-//       res.status(200).json({info: `${reqDict.url} crawl finished`});
-//     } else {
-//       res.status(404).json({error: `Ensure that ${requiredKeys.join(". ")} is present as keys in json`});
-//     }
-//   } catch (e) {
-//     res.status(500).json({error: e.message});
-//   }
-//
-// });
-//
-//
-// app.listen(port, () => {
-//   console.log(`Server running at http://localhost:${port}`);
-// });
+function sendEventsBasedOnExitCode(exitCode) {
+  initRedis("redis://localhost/0").then(localRedis => {
+    const crawler_state_json = localRedis.get(CRAWLER_STATE_KEY);
+    // todo: create mapping of exitCode and event to send
+  });
+}
 
 
 // Handle SIGTSTP signal (Ctrl+Z)

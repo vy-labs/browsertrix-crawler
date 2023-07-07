@@ -4,7 +4,8 @@ services:
         image: adityaraj28/browsertrix:latest
         build:
           context: ./
-        platform: linux/amd64
+#        platform: linux/amd64
+        command: "node /app/server.js"
         volumes:
           - ~/crawls:/crawls
         cap_add:

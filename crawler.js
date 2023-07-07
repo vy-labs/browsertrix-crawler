@@ -37,6 +37,8 @@ import {is_valid_link} from "./util/seedHelper.js";
 import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
 
 import AWS from "aws-sdk";
+import Redis from "ioredis";
+import {CRAWLER_STATE_KEY} from "./constants.js";
 
 
 const HTTPS_AGENT = HTTPSAgent({
@@ -331,15 +333,15 @@ export class Crawler {
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
       if(!this.interrupted || this.s3FilePath){
-        await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
-          url: this.params.url[0],
-          event: "CRAWL_SUCCESS",
-          domain: this.params.domain,
-          level: this.params.level,
-          s3Path: this.s3FilePath,
-          retry: this.params.retry,
-          redirection_chain: this.redirection_string
-        }));
+        // await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+        //   url: this.params.url[0],
+        //   event: "CRAWL_SUCCESS",
+        //   domain: this.params.domain,
+        //   level: this.params.level,
+        //   s3Path: this.s3FilePath,
+        //   retry: this.params.retry,
+        //   redirection_chain: this.redirection_string
+        // }));
       }else{
         await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
           url: this.params.url[0],
@@ -843,6 +845,23 @@ export class Crawler {
     await this.awaitPendingClear();
 
     await this.postCrawl(true);
+
+    // send all the crawler params needed to redis
+    await this.sendCrawlerParamsToLocalRedis();
+  }
+
+  async sendCrawlerParamsToLocalRedis(){
+    const event = JSON.stringify({
+      url: this.params.url[0],
+      domain: this.params.domain,
+      level: this.params.level,
+      s3Path: this.s3FilePath,
+      retry: this.params.retry,
+      redirection_chain: this.redirection_string
+    });
+    const localRedis = await initRedis("redis://localhost/0");
+    localRedis.set(CRAWLER_STATE_KEY, event);
+    await localRedis.disconnect();
   }
 
   async uploadToS3(filePath) {

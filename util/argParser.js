@@ -448,6 +448,10 @@ class ArgParser {
     }
 
     // log options
+    console.log("in arg parser");
+    console.log(typeof argv);
+    console.log(typeof argv.logging);
+    console.log(argv);
     argv.logging = argv.logging.split(",");
     argv.logLevel = argv.logLevel ? argv.logLevel.split(",") : [];
     argv.context = argv.context ? argv.context.split(",") : [];
