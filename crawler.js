@@ -335,12 +335,13 @@ export class Crawler {
   }
 
   async run() {
-    await this.bootstrap();
+
 
     let status;
     let exitCode = 0;
 
     try {
+      await this.bootstrap();
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
       if(!this.interrupted || this.s3FilePath){
@@ -1245,6 +1246,7 @@ export class Crawler {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
             if (failCrawlOnError) {
               await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
+              this.removeCollection(this.collDir);
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
               logger.error("Page Load Timeout, skipping page", {msg, ...logDetails});
@@ -1257,6 +1259,7 @@ export class Crawler {
         } else {
           if (failCrawlOnError) {
             await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
+            this.removeCollection(this.collDir);
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
             logger.error("Page Load Error, skipping page", {msg, ...logDetails});
