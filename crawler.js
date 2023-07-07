@@ -37,7 +37,6 @@ import {is_valid_link} from "./util/seedHelper.js";
 import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
 
 import AWS from "aws-sdk";
-import Redis from "ioredis";
 import {CRAWLER_STATE_KEY} from "./constants.js";
 
 
@@ -149,6 +148,7 @@ export class Crawler {
     this.browser = new Browser();
     this.MAX_REDIS_TRIES = 3;
     this.redirection_string = null;
+    this.failCrawlOnError = null;
   }
 
   configureUA() {
@@ -347,6 +347,7 @@ export class Crawler {
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
       if(!this.interrupted || this.s3FilePath){
+        exitCode = 0;
         // await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
         //   url: this.params.url[0],
         //   event: "CRAWL_SUCCESS",
@@ -356,31 +357,33 @@ export class Crawler {
         //   retry: this.params.retry,
         //   redirection_chain: this.redirection_string
         // }));
+
       }else{
-        await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
-          url: this.params.url[0],
-          event: "CRAWL_FAIL",
-          domain: this.params.domain,
-          level: this.params.level,
-          message: "Crawl interrupted. Please check logs for a detailed reason.",
-          retry: this.params.retry
-        }));
+        // await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+        //   url: this.params.url[0],
+        //   event: "CRAWL_FAIL",
+        //   domain: this.params.domain,
+        //   level: this.params.level,
+        //   message: "Crawl interrupted. Please check logs for a detailed reason.",
+        //   retry: this.params.retry
+        // }));
+        exitCode = 1;
       }
     } catch(e) {
       logger.error("Crawl failed", e);
-      exitCode = 9;
+      exitCode = 1;
       status = "failing";
       if (await this.crawlState.incFailCount()) {
         status = "failed";
       }
-      await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
-        url: this.params.url[0],
-        event: "CRAWL_FAIL",
-        domain: this.params.domain,
-        level: this.params.level,
-        message: "Crawl interrupted. Please check logs for a detailed reason.",
-        retry: this.params.retry
-      }));
+      // await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+      //   url: this.params.url[0],
+      //   event: "CRAWL_FAIL",
+      //   domain: this.params.domain,
+      //   level: this.params.level,
+      //   message: "Crawl interrupted. Please check logs for a detailed reason.",
+      //   retry: this.params.retry
+      // }));
 
     } finally {
       logger.info(`Crawl status: ${status}`);
@@ -881,16 +884,12 @@ export class Crawler {
 
   async sendCrawlerParamsToLocalRedis(){
     const event = JSON.stringify({
-      url: this.params.url[0],
-      domain: this.params.domain,
-      level: this.params.level,
-      s3Path: this.s3FilePath,
-      retry: this.params.retry,
-      redirection_chain: this.redirection_string
+      collDir: this.collDir,
+      redirection_chain: this.redirection_string,
+      failCrawlOnError: this.failCrawlOnError
     });
     const localRedis = await initRedis("redis://localhost/0");
     localRedis.set(CRAWLER_STATE_KEY, event);
-    await localRedis.disconnect();
   }
 
   async uploadToS3(filePath, filename) {
@@ -1191,7 +1190,7 @@ export class Crawler {
 
     const logDetails = data.logDetails;
 
-    const failCrawlOnError = ((depth === 0) && this.params.failOnFailedSeed);
+    this.failCrawlOnError = ((depth === 0) && this.params.failOnFailedSeed);
 
     let isHTMLPage = await timedRun(
       this.isHTML(url),
@@ -1241,8 +1240,8 @@ export class Crawler {
       // Handle 4xx or 5xx response as a page load error
       const statusCode = resp.status();
       if (statusCode.toString().startsWith("4") || statusCode.toString().startsWith("5")) {
-        if (failCrawlOnError) {
-          await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, message: `Seed Page Load Error, status code: ${statusCode}`}));
+        if (this.failCrawlOnError) {
+          // await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, message: `Seed Page Load Error, status code: ${statusCode}`}));
           this.removeCollection(this.collDir);
           logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails}, "general", statusCode);
         } else {
@@ -1263,8 +1262,8 @@ export class Crawler {
       if (!msg.startsWith("net::ERR_ABORTED") || !ignoreAbort) {
         if (e.name === "TimeoutError") {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
-            if (failCrawlOnError) {
-              await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
+            if (this.failCrawlOnError) {
+              // await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
               logger.error("Page Load Timeout, skipping page", {msg, ...logDetails});
@@ -1275,8 +1274,8 @@ export class Crawler {
             data.skipBehaviors = true;
           }
         } else {
-          if (failCrawlOnError) {
-            await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
+          if (this.failCrawlOnError) {
+            // await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
             logger.error("Page Load Error, skipping page", {msg, ...logDetails});

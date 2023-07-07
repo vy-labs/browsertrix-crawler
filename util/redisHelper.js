@@ -17,7 +17,7 @@ export class RedisHelper{
 
   async getEventFromQueue(queueName){
     try {
-      const result = await this.redis.blpop(queueName, 5); // wait for 120 secs for an event
+      const result = await this.redis.blpop(queueName, 120); // wait for 120 secs for an event
 
       if (result === null) {
         console.log("Timeout occurred, no item available in the queue within 120 seconds");

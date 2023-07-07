@@ -7,10 +7,12 @@ services:
 #        platform: linux/amd64
         command: "node /app/server.js"
         volumes:
-          - ~/crawls:/crawls
+          - ./crawls:/crawls
         cap_add:
           - NET_ADMIN
           - SYS_ADMIN
         ports:
           - "3000:3000"
         shm_size: 1gb
+        env_file:
+          - .env

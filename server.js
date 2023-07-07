@@ -57,7 +57,12 @@ let fixedArgs = createArgsFromYAML();
     const exitCode = crawlProcess.status;
     console.log(`exitCode: ${exitCode}`);
 
-    sendEventsBasedOnExitCode(exitCode);
+    sendEventsBasedOnExitCode(exitCode, redisHelper, {
+      url: url,
+      domain: domain,
+      level: level,
+      retry: retry
+    });
   }
 })();
 
@@ -65,10 +70,39 @@ function calculateMd5Hash(string) {
   return md5(string);
 }
 
-function sendEventsBasedOnExitCode(exitCode) {
-  initRedis("redis://localhost/0").then(localRedis => {
-    const crawler_state_json = localRedis.get(CRAWLER_STATE_KEY);
-    // todo: create mapping of exitCode and event to send
+function sendEventsBasedOnExitCode(exitCode, redisHelper, fixedParams) {
+  initRedis("redis://localhost/0").then(async localRedis => {
+    console.log("In init redis then");
+    const crawler_state = JSON.parse(localRedis.get(CRAWLER_STATE_KEY));
+
+    const fixedParamsDict = {
+      url: fixedParams.url,
+      domain: fixedParams.domain,
+      level: fixedParams.level,
+      retry: fixedParams.retry
+    };
+
+    if (exitCode === 0) {
+      await redisHelper.pushEventToQueue("crawlStatus", JSON.stringify(...fixedParamsDict, {
+        event: "CRAWL_SUCCESS",
+        s3Path: crawler_state.s3Path,
+        redirection_chain: crawler_state.redirection_chain
+      }));
+    } else if (exitCode === 1) {
+      await redisHelper.pushEventToQueue("crawlStatus", JSON.stringify(...fixedParamsDict, {
+        event: "CRAWL_FAIL",
+        message: "Crawl interrupted. Please check logs for a detailed reason."
+      }));
+    } else if(exitCode.toString().startsWith("4") || exitCode.toString().startsWith("5")) {
+      if(crawler_state.failCrawlOnError){
+        await redisHelper.pushEventToQueue("crawlStatus", JSON.stringify(...fixedParamsDict, {
+          event: "CRAWL_FAIL",
+          message: `Seed Page Load Error, status code: ${exitCode}`
+        }));
+      } else {
+        logger.error("Unhandled status code");
+      }
+    }
   });
 }
 

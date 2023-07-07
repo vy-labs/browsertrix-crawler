@@ -1,3 +1,1 @@
-module.exports = {
-  CRAWLER_STATE_KEY: "localCrawlerState"
-};
+export const CRAWLER_STATE_KEY="localCrawlerState";
