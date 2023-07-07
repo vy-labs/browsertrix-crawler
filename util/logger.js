@@ -23,10 +23,15 @@ class Logger
     this.crawlState = null;
     const res = parseArgs();
     this.params = res.parsed;
+    this.syslogStream = null;
   }
 
   setExternalLogStream(logFH) {
     this.logStream = logFH;
+  }
+
+  setSysLogStream(syslogFH) {
+    this.syslogStream = syslogFH;
   }
 
   setDebugLogging(debugLog) {
@@ -85,6 +90,10 @@ class Logger
     console.log(string);
     if (this.logStream) {
       this.logStream.write(string + "\n");
+    }
+
+    if (this.syslogStream) {
+      this.syslogStream.write(string + "\n");
     }
 
     const toLogToRedis = ["error", "fatal"];
