@@ -325,6 +325,7 @@ export class Crawler {
 
     let status;
     let exitCode = 0;
+    logger.info("url:",this.params.url);
 
     try {
       await this.crawl();
