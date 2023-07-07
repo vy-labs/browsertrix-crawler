@@ -335,13 +335,12 @@ export class Crawler {
   }
 
   async run() {
-    await this.bootstrap();
 
     let status;
     let exitCode = 0;
-    logger.info("url:",this.params.url);
 
     try {
+      await this.bootstrap();
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
       if(!this.interrupted || this.s3FilePath){
@@ -874,91 +873,9 @@ export class Crawler {
     await this.postCrawl(true);
   }
 
-  async uploadToS3(filePath, filename) {
-    const s3 = new AWS.S3();
-    // Define the bucket name and file path
-    const bucketName = process.env.BUCKET_NAME;
-    logger.info("bucket name: " + bucketName);
-
-    let prefixKey = `${process.env.ENVIRONMENT}/${this.params.domain}/level_${this.params.level}/${this.params.collection}/${this.current_date}/`;
-
-    // Set the parameters for the S3 upload
-    const params = {
-      Bucket: bucketName,
-      Key: `${prefixKey}${filename}`, // Specify the desired destination file name in the bucket
-      Body: fs.createReadStream(filePath),
-    };
-
-    try {
-      // Upload the file to S3
-      const result = await s3.upload(params).promise();
-      this.s3FilePath = result.Location;
-      logger.info("File uploaded successfully:", result.Location);
-      // remove  collection on successful upload TODO
-    } catch (e){
-      logger.error("error",e);
-    }
-  }
-
-  removeCollection(directoryPath) {
-    // Directories to exclude from deletion
-    const directoriesToExclude = [];
-
-    // Function to recursively delete a directory and its contents
-    const deleteDirectory = (directory) => {
-      if (!fs.existsSync(directory)) {
-        return;
-      }
-
-      fs.readdirSync(directory).forEach((file) => {
-        const filePath = path.join(directory, file);
-        if (fs.lstatSync(filePath).isDirectory()) {
-          deleteDirectory(filePath);
-        } else {
-          fs.unlinkSync(filePath);
-          logger.debug(`Deleted file: ${filePath}`);
-        }
-      });
-
-      fs.rmdirSync(directory);
-      logger.debug(`Deleted directory: ${directory}`);
-    };
-
-    // Function to delete all files and subdirectories within the main directory, excluding specific directories
-    const deleteFilesAndSubdirectories = (directory) => {
-      if (!fs.existsSync(directory)) {
-        return;
-      }
-
-      fs.readdirSync(directory).forEach((file) => {
-        const filePath = path.join(directory, file);
-        if (fs.lstatSync(filePath).isDirectory()) {
-          if (!directoriesToExclude.includes(file)) {
-            deleteDirectory(filePath);
-          }
-        } else {
-          fs.unlinkSync(filePath);
-          logger.debug(`Deleted file: ${filePath}`);
-        }
-      });
-
-      try {
-        fs.rmdirSync(directory);
-        logger.debug(`Deleted directory: ${directory}`);
-      } catch (error) {
-        logger.error(`Failed to delete directory: ${directory}`);
-      }
-    };
-
-    // Call the function to delete all files and subdirectories within the main directory, excluding specific directories
-    deleteFilesAndSubdirectories(directoryPath);
-  }
-
   async postCrawl(done=false) {
     if (this.params.combineWARC) {
-      let warcFilePath = await this.combineWARC();
-      if(done)
-        await this.uploadToS3(warcFilePath, `${this.params.crawlId}.warc.gz`);
+      await this.combineWARC();
     }
 
     if (this.params.generateCDX) {
@@ -1224,7 +1141,6 @@ export class Crawler {
       if (statusCode.toString().startsWith("4") || statusCode.toString().startsWith("5")) {
         if (failCrawlOnError) {
           await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, message: `Seed Page Load Error, status code: ${statusCode}`}));
-          this.removeCollection(this.collDir);
           logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails}, "general", statusCode);
         } else {
           logger.error("Page Load Error, skipping page", {statusCode, ...logDetails});
@@ -1674,7 +1590,6 @@ export class Crawler {
     }
 
     logger.debug(`Combined WARCs saved as: ${generatedCombinedWarcs}`);
-    return combinedWarcFullPath;
   }
 
   async serializeConfig(done = false) {

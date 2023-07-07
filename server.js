@@ -9,6 +9,8 @@ import {sleep} from "./util/timing.js";
 import {RedisHelper} from "./util/redisHelper.js";
 import md5 from "md5";
 import { v4 as uuidv4 } from "uuid";
+import path from "path";
+import AWS from "aws-sdk";
 
 const app = express();
 const port = 3000;
@@ -57,45 +59,144 @@ let fixedArgs = createArgsFromYAML();
     ];
     args.push(...fixedArgs);
     crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
+    const status = crawlProcess.status;
+    const redirectionChain = "";
+    const collDir = "";
+    await postCrawl(collDir);
+    if(status === 54){
+      await redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({
+        url: url,
+        event: "CRAWL_SUCCESS",
+        domain: domain,
+        level: level,
+        retry: retry,
+        s3Path: "",
+        redirection_chain: redirectionChain
+      }));
+    }else if(status === 55){
+      //fail
+    }
   }
 })();
+
+async function postCrawl(collDir){
+  const uploadFilesInDirectory = async (directory) => {
+    if (!fs.existsSync(directory)) {
+      return;
+    }
+
+    for (const file of fs.readdirSync(directory)) {
+      const filePath = path.join(directory, file);
+      const fileName = path.basename(filePath);
+      if (!fileName.startsWith("crawl")) {
+        await uploadToS3(filePath, fileName);
+      }
+    }
+  };
+
+  const uploadWarcFile = async (directory) => {
+    if (!fs.existsSync(directory)) {
+      return;
+    }
+
+    for (const file of fs.readdirSync(directory)) {
+      const filePath = path.join(directory, file);
+      if (!fs.lstatSync(filePath).isDirectory()){
+        const fileName = path.basename(filePath);
+        if (fileName.endsWith(".warc.gz")) {
+          await uploadToS3(filePath, fileName);
+        }
+      }
+    }
+  };
+
+  await uploadWarcFile(collDir);
+  const logDir = path.join(collDir, "logs");
+  const pagesDir = path.join(collDir, "pages");
+  await uploadFilesInDirectory(logDir);
+  await uploadFilesInDirectory(pagesDir);
+
+  removeCollection(collDir);
+}
+
+async function uploadToS3(filePath, filename) {
+  const s3 = new AWS.S3();
+  // Define the bucket name and file path
+  const bucketName = process.env.BUCKET_NAME;
+  logger.info("bucket name: " + bucketName);
+
+  let prefixKey = `${process.env.ENVIRONMENT}/${this.params.domain}/level_${this.params.level}/${this.params.collection}/${this.current_date}/`;
+
+  // Set the parameters for the S3 upload
+  const params = {
+    Bucket: bucketName,
+    Key: `${prefixKey}${filename}`, // Specify the desired destination file name in the bucket
+    Body: fs.createReadStream(filePath),
+  };
+
+  try {
+    // Upload the file to S3
+    const result = await s3.upload(params).promise();
+    this.s3FilePath = result.Location;
+    logger.info("File uploaded successfully:", result.Location);
+  } catch (e){
+    logger.error("error",e);
+  }
+}
+
+function removeCollection(directoryPath) {
+
+  // Function to recursively delete a directory and its contents
+  const deleteDirectory = (directory) => {
+    if (!fs.existsSync(directory)) {
+      return;
+    }
+
+    fs.readdirSync(directory).forEach((file) => {
+      const filePath = path.join(directory, file);
+      if (fs.lstatSync(filePath).isDirectory()) {
+        deleteDirectory(filePath);
+      } else {
+        fs.unlinkSync(filePath);
+        logger.debug(`Deleted file: ${filePath}`);
+      }
+    });
+
+    fs.rmdirSync(directory);
+    logger.debug(`Deleted directory: ${directory}`);
+  };
+
+  // Function to delete all files and subdirectories within the main directory, excluding specific directories
+  const deleteFilesAndSubdirectories = (directory) => {
+    if (!fs.existsSync(directory)) {
+      return;
+    }
+
+    fs.readdirSync(directory).forEach((file) => {
+      const filePath = path.join(directory, file);
+      if (fs.lstatSync(filePath).isDirectory()) {
+        deleteDirectory(filePath);
+      } else {
+        fs.unlinkSync(filePath);
+        logger.debug(`Deleted file: ${filePath}`);
+      }
+    });
+
+    try {
+      fs.rmdirSync(directory);
+      logger.debug(`Deleted directory: ${directory}`);
+    } catch (error) {
+      logger.error(`Failed to delete directory: ${directory}`);
+    }
+  };
+
+  // Call the function to delete all files and subdirectories within the main directory, excluding specific directories
+  deleteFilesAndSubdirectories(directoryPath);
+}
 
 function calculateMd5Hash(string) {
   return md5(string);
 }
-
-
-// app.post("/crawl", (req, res) => {
-//   try {
-//     const reqDict = {...req.body};
-//     const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
-//     const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
-//     if (missingKeys.length === 0) {
-//       const args = [
-//         "--url", reqDict.url,
-//         "--domain", reqDict.domain,
-//         "--level", reqDict.level,
-//         "--collection", String(reqDict.collection),
-//         "--id", String(reqDict.id),
-//         "--retry", reqDict.retry
-//       ];
-//       args.push(...fixedArgs);
-//
-//       crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
-//       res.status(200).json({info: `${reqDict.url} crawl finished`});
-//     } else {
-//       res.status(404).json({error: `Ensure that ${requiredKeys.join(". ")} is present as keys in json`});
-//     }
-//   } catch (e) {
-//     res.status(500).json({error: e.message});
-//   }
-//
-// });
-//
-//
-// app.listen(port, () => {
-//   console.log(`Server running at http://localhost:${port}`);
-// });
 
 
 // Handle SIGTSTP signal (Ctrl+Z)
