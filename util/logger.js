@@ -1,3 +1,5 @@
+import { parseArgs } from "./argParser.js";
+
 // ===========================================================================
 // to fix serialization of regexes for logging purposes
 RegExp.prototype.toJSON = RegExp.prototype.toString;
@@ -19,10 +21,17 @@ class Logger
     this.logLevels = [];
     this.contexts = [];
     this.crawlState = null;
+    const res = parseArgs();
+    this.params = res.parsed;
+    this.syslogStream = null;
   }
 
   setExternalLogStream(logFH) {
     this.logStream = logFH;
+  }
+
+  setSysLogStream(syslogFH) {
+    this.syslogStream = syslogFH;
   }
 
   setDebugLogging(debugLog) {
@@ -52,6 +61,12 @@ class Logger
       data = {"message": data.toString()};
     }
 
+    data["domain"] = this.params.domain;
+    data["url"] = this.params.url;
+    data["level"] = this.params.level;
+    data["retry"] = this.params.retry;
+    data["crawlId"] = this.params.id;
+
     if (this.logLevels.length) {
       if (this.logLevels.indexOf(logLevel) < 0) {
         return;
@@ -75,6 +90,10 @@ class Logger
     console.log(string);
     if (this.logStream) {
       this.logStream.write(string + "\n");
+    }
+
+    if (this.syslogStream) {
+      this.syslogStream.write(string + "\n");
     }
 
     const toLogToRedis = ["error", "fatal"];

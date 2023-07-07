@@ -182,4 +182,3 @@ export function interpolateFilename(filename, crawlId) {
   filename = filename.replace("@id", crawlId);
   return filename;
 }
-

@@ -32,6 +32,12 @@ import { OriginOverride } from "./util/originoverride.js";
 // to ignore HTTPS error for HEAD check
 import { Agent as HTTPAgent } from "http";
 import { Agent as HTTPSAgent } from "https";
+import {RedisHelper} from "./util/redisHelper.js";
+import {is_valid_link} from "./util/seedHelper.js";
+import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
+
+import AWS from "aws-sdk";
+
 
 const HTTPS_AGENT = HTTPSAgent({
   rejectUnauthorized: false,
@@ -58,11 +64,27 @@ export class Crawler {
     this.collDir = path.join(this.params.cwd, "collections", this.params.collection);
     this.logDir = path.join(this.collDir, "logs");
     this.logFilename = path.join(this.logDir, `crawl-${new Date().toISOString().replace(/[^\d]/g, "")}.log`);
+    const syslogDir = "/var/log";
+    this.syslogFilename = path.join(syslogDir, "syslog");
+
+    try {
+      if (!fs.existsSync(this.syslogFilename)) {
+        fs.writeFileSync(this.syslogFilename, "");
+      }
+    } catch (err) {
+      logger.error("Error creating log file:", err);
+    }
+
 
     const debugLogging = this.params.logging.includes("debug");
     logger.setDebugLogging(debugLogging);
     logger.setLogLevel(this.params.logLevel);
     logger.setContext(this.params.context);
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    this.current_date = `${year}-${month}-${day}`;
 
     logger.debug("Writing log to: " + this.logFilename, {}, "init");
 
@@ -123,6 +145,8 @@ export class Crawler {
     this.behaviorLastLine = null;
 
     this.browser = new Browser();
+    this.MAX_REDIS_TRIES = 3;
+    this.redirection_string = null;
   }
 
   configureUA() {
@@ -146,7 +170,7 @@ export class Crawler {
   }
 
   async initCrawlState() {
-    const redisUrl = this.params.redisStoreUrl || "redis://localhost:6379/0";
+    const redisUrl = "redis://localhost:6379/0";
 
     if (!redisUrl.startsWith("redis://")) {
       logger.fatal("stateStoreUrl must start with redis:// -- Only redis-based store currently supported");
@@ -164,6 +188,23 @@ export class Crawler {
         await sleep(3);
       }
     }
+
+    let broadCrawlRedis;
+    let redis_tries = 0;
+    while (true) {
+      try {
+        broadCrawlRedis = await initBroadCrawlRedis();
+        redis_tries = redis_tries + 1;
+        break;
+      } catch (e) {
+        if(redis_tries >= this.MAX_REDIS_TRIES) {
+          logger.fatal("Unable to connect to state store Redis: " + redisUrl);
+        }
+        logger.warn("Waiting for redis at broad crawl", {}, "state");
+        await sleep(3);
+      }
+    }
+    this.redisHelper = new RedisHelper(broadCrawlRedis);
 
     logger.debug(`Storing state via Redis ${redisUrl} @ key prefix "${this.crawlId}"`, {}, "state");
 
@@ -214,6 +255,9 @@ export class Crawler {
     fs.mkdirSync(this.logDir, {recursive: true});
     this.logFH = fs.createWriteStream(this.logFilename);
     logger.setExternalLogStream(this.logFH);
+
+    this.syslogFH = fs.createWriteStream(this.syslogFilename);
+    logger.setSysLogStream(this.syslogFH);
 
     this.infoString = await this.getInfoString();
     logger.info(this.infoString);
@@ -291,14 +335,35 @@ export class Crawler {
   }
 
   async run() {
-    await this.bootstrap();
+
 
     let status;
     let exitCode = 0;
 
     try {
+      await this.bootstrap();
       await this.crawl();
       status = (!this.interrupted ? "done" : "interrupted");
+      if(!this.interrupted || this.s3FilePath){
+        await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+          url: this.params.url[0],
+          event: "CRAWL_SUCCESS",
+          domain: this.params.domain,
+          level: this.params.level,
+          s3Path: this.s3FilePath,
+          retry: this.params.retry,
+          redirection_chain: this.redirection_string
+        }));
+      }else{
+        await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+          url: this.params.url[0],
+          event: "CRAWL_FAIL",
+          domain: this.params.domain,
+          level: this.params.level,
+          message: "Crawl interrupted. Please check logs for a detailed reason.",
+          retry: this.params.retry
+        }));
+      }
     } catch(e) {
       logger.error("Crawl failed", e);
       exitCode = 9;
@@ -306,6 +371,14 @@ export class Crawler {
       if (await this.crawlState.incFailCount()) {
         status = "failed";
       }
+      await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
+        url: this.params.url[0],
+        event: "CRAWL_FAIL",
+        domain: this.params.domain,
+        level: this.params.level,
+        message: "Crawl interrupted. Please check logs for a detailed reason.",
+        retry: this.params.retry
+      }));
 
     } finally {
       logger.info(`Crawl status: ${status}`);
@@ -313,6 +386,23 @@ export class Crawler {
       if (this.crawlState) {
         await this.crawlState.setStatus(status);
       }
+
+      const uploadFilesInDirectory = async (directory) => {
+        if (!fs.existsSync(directory)) {
+          return;
+        }
+
+        for (const file of fs.readdirSync(directory)) {
+          const filePath = path.join(directory, file);
+          const fileName = path.basename(filePath);
+          if (!fileName.startsWith("crawl")) {
+            await this.uploadToS3(filePath, fileName);
+          }
+        }
+      };
+      await uploadFilesInDirectory(this.logDir);
+      await uploadFilesInDirectory(this.pagesDir);
+      this.removeCollection(this.collDir);
 
       process.exit(exitCode);
     }
@@ -424,6 +514,7 @@ export class Crawler {
         logger.debug("Skipping screenshots for non-HTML page", logDetails);
       }
       const archiveDir = path.join(this.collDir, "archive");
+      logger.info("archiveDir " + archiveDir);
       const screenshots = new Screenshots({browser: this.browser, page, url, directory: archiveDir});
       if (this.params.screenshot.includes("view")) {
         await screenshots.take();
@@ -489,7 +580,6 @@ export class Crawler {
       }
     } else {
       logger.warn("Page Load Failed", {loadState, ...logDetails}, "pageStatus");
-
       await this.crawlState.markFailed(data.url);
 
       if (this.healthChecker) {
@@ -637,11 +727,11 @@ export class Crawler {
     }
 
     if (interrupt) {
-      this.gracefulFinish();
+      await this.gracefulFinish();
     }
   }
 
-  gracefulFinish() {
+  async gracefulFinish() {
     this.interrupted = true;
     logger.info("Crawler interrupted, gracefully finishing current pages");
     if (!this.params.waitOnDone) {
@@ -781,12 +871,94 @@ export class Crawler {
     // extra wait for all resources to land into WARCs
     await this.awaitPendingClear();
 
-    await this.postCrawl();
+    await this.postCrawl(true);
   }
 
-  async postCrawl() {
+  async uploadToS3(filePath, filename) {
+    const s3 = new AWS.S3();
+    // Define the bucket name and file path
+    const bucketName = process.env.BUCKET_NAME;
+    logger.info("bucket name: " + bucketName);
+
+    let prefixKey = `${process.env.ENVIRONMENT}/${this.params.domain}/level_${this.params.level}/${this.params.collection}/${this.current_date}/`;
+
+    // Set the parameters for the S3 upload
+    const params = {
+      Bucket: bucketName,
+      Key: `${prefixKey}${filename}`, // Specify the desired destination file name in the bucket
+      Body: fs.createReadStream(filePath),
+    };
+
+    try {
+      // Upload the file to S3
+      const result = await s3.upload(params).promise();
+      this.s3FilePath = result.Location;
+      logger.info("File uploaded successfully:", result.Location);
+      // remove  collection on successful upload TODO
+    } catch (e){
+      logger.error("error",e);
+    }
+  }
+
+  removeCollection(directoryPath) {
+    // Directories to exclude from deletion
+    const directoriesToExclude = [];
+
+    // Function to recursively delete a directory and its contents
+    const deleteDirectory = (directory) => {
+      if (!fs.existsSync(directory)) {
+        return;
+      }
+
+      fs.readdirSync(directory).forEach((file) => {
+        const filePath = path.join(directory, file);
+        if (fs.lstatSync(filePath).isDirectory()) {
+          deleteDirectory(filePath);
+        } else {
+          fs.unlinkSync(filePath);
+          logger.debug(`Deleted file: ${filePath}`);
+        }
+      });
+
+      fs.rmdirSync(directory);
+      logger.debug(`Deleted directory: ${directory}`);
+    };
+
+    // Function to delete all files and subdirectories within the main directory, excluding specific directories
+    const deleteFilesAndSubdirectories = (directory) => {
+      if (!fs.existsSync(directory)) {
+        return;
+      }
+
+      fs.readdirSync(directory).forEach((file) => {
+        const filePath = path.join(directory, file);
+        if (fs.lstatSync(filePath).isDirectory()) {
+          if (!directoriesToExclude.includes(file)) {
+            deleteDirectory(filePath);
+          }
+        } else {
+          fs.unlinkSync(filePath);
+          logger.debug(`Deleted file: ${filePath}`);
+        }
+      });
+
+      try {
+        fs.rmdirSync(directory);
+        logger.debug(`Deleted directory: ${directory}`);
+      } catch (error) {
+        logger.error(`Failed to delete directory: ${directory}`);
+      }
+    };
+
+    // Call the function to delete all files and subdirectories within the main directory, excluding specific directories
+    deleteFilesAndSubdirectories(directoryPath);
+  }
+
+  async postCrawl(done=false) {
     if (this.params.combineWARC) {
-      await this.combineWARC();
+      let warcFilePath = await this.combineWARC();
+      if(done)
+        await this.uploadToS3(warcFilePath, `${this.params.crawlId}.warc.gz`);
     }
 
     if (this.params.generateCDX) {
@@ -828,8 +1000,10 @@ export class Crawler {
   async closeLog() {
     // close file-based log
     logger.setExternalLogStream(null);
+    logger.setSysLogStream(null);
     try {
       await new Promise(resolve => this.logFH.close(() => resolve()));
+      await new Promise(resolve => this.syslogFH.close(() => resolve()));
     } catch (e) {
       // ignore
     }
@@ -985,6 +1159,7 @@ export class Crawler {
 
     if (toFile && this.params.statsFilename) {
       try {
+
         await fsp.writeFile(this.params.statsFilename, JSON.stringify(stats, null, 2));
       } catch (err) {
         logger.warn("Stats output failed", err);
@@ -1048,7 +1223,9 @@ export class Crawler {
       const statusCode = resp.status();
       if (statusCode.toString().startsWith("4") || statusCode.toString().startsWith("5")) {
         if (failCrawlOnError) {
-          logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails});
+          await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, message: `Seed Page Load Error, status code: ${statusCode}`}));
+          this.removeCollection(this.collDir);
+          logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails}, "general", statusCode);
         } else {
           logger.error("Page Load Error, skipping page", {statusCode, ...logDetails});
           throw new Error(`Page ${url} returned status code ${statusCode}`);
@@ -1059,12 +1236,17 @@ export class Crawler {
 
       isHTMLPage = this.isHTMLContentType(contentType);
 
+      this.redirection_string = await this.buildRedirectionChain(resp);
+      logger.info("redirection chain :" + this.redirection_string);
+
     } catch (e) {
       let msg = e.message || "";
       if (!msg.startsWith("net::ERR_ABORTED") || !ignoreAbort) {
         if (e.name === "TimeoutError") {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
             if (failCrawlOnError) {
+              await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
+              this.removeCollection(this.collDir);
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
               logger.error("Page Load Timeout, skipping page", {msg, ...logDetails});
@@ -1076,6 +1258,8 @@ export class Crawler {
           }
         } else {
           if (failCrawlOnError) {
+            await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
+            this.removeCollection(this.collDir);
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
             logger.error("Page Load Error, skipping page", {msg, ...logDetails});
@@ -1117,11 +1301,29 @@ export class Crawler {
     }
 
     logger.debug("Extracting links");
-
     for (const opts of selectorOptsList) {
       const links = await this.extractLinks(page, data.filteredFrames, opts, logDetails);
-      await this.queueInScopeUrls(seedId, links, depth, extraHops, logDetails);
+      const parsedLinks = [];
+      for(const link of links) {
+        if(is_valid_link(page.url(), link) === false) continue;
+        const parsedLink = new URL(link.trim());
+        if (parsedLink !== null) {
+          await this.redisHelper.pushEventToQueue("extractedUrls",JSON.stringify({link: parsedLink, event: "ADD_URL", domain: this.params.domain, level: this.params.level + 1}));
+          parsedLinks.push(parsedLink);
+        }
+      }
+      await this.queueInScopeUrls(seedId, parsedLinks, depth, extraHops, logDetails);
     }
+  }
+
+  async buildRedirectionChain(response) {
+    const chain = response.request().redirectChain();
+    const redirection_chain = [];
+    for(const url_object of chain) {
+      redirection_chain.push(url_object.url());
+    }
+    redirection_chain.push(response.url());
+    return `[${redirection_chain.join(",")}]`;
   }
 
   async netIdle(page, details) {
@@ -1197,7 +1399,6 @@ export class Crawler {
 
       for (const possibleUrl of urls) {
         const res = this.isInScope({url: possibleUrl, extraHops: newExtraHops, depth, seedId}, logDetails);
-
         if (!res) {
           continue;
         }
@@ -1475,6 +1676,7 @@ export class Crawler {
     }
 
     logger.debug(`Combined WARCs saved as: ${generatedCombinedWarcs}`);
+    return combinedWarcFullPath;
   }
 
   async serializeConfig(done = false) {
