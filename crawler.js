@@ -402,7 +402,7 @@ export class Crawler {
       };
       await uploadFilesInDirectory(this.logDir);
       await uploadFilesInDirectory(this.pagesDir);
-      this.removeCollection(this.collDir);
+      this.removeCollectionAndProfile(this.collDir);
 
       process.exit(exitCode);
     }
@@ -900,9 +900,33 @@ export class Crawler {
     }
   }
 
-  removeCollection(directoryPath) {
+  removeCollectionAndProfile(directoryPath) {
     // Directories to exclude from deletion
     const directoriesToExclude = [];
+
+    // delete profiles
+    const deleteProfiles = () => {
+      const directory = "/tmp";
+      const pattern = /^profile-/;
+    
+      try {
+        const files = fs.readdirSync(directory);
+    
+        files.forEach(file => {
+          const filePath = `${directory}/${file}`;
+    
+          const stats = fs.statSync(filePath);
+    
+          if (stats.isDirectory() && pattern.test(file)) {
+            fs.rmdirSync(filePath, { recursive: true });
+            logger.info("Deleted directory:", filePath);
+          }
+        });
+      } catch (err) {
+        logger.error("Error:", err);
+        throw err;
+      }
+    };
 
     // Function to recursively delete a directory and its contents
     const deleteDirectory = (directory) => {
@@ -952,6 +976,7 @@ export class Crawler {
 
     // Call the function to delete all files and subdirectories within the main directory, excluding specific directories
     deleteFilesAndSubdirectories(directoryPath);
+    deleteProfiles();
   }
 
   async postCrawl(done=false) {
@@ -1224,7 +1249,7 @@ export class Crawler {
       if (statusCode.toString().startsWith("4") || statusCode.toString().startsWith("5")) {
         if (failCrawlOnError) {
           await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, message: `Seed Page Load Error, status code: ${statusCode}`}));
-          this.removeCollection(this.collDir);
+          this.removeCollectionAndProfile(this.collDir);
           logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails}, "general", statusCode);
         } else {
           logger.error("Page Load Error, skipping page", {statusCode, ...logDetails});
@@ -1246,7 +1271,7 @@ export class Crawler {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
             if (failCrawlOnError) {
               await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Timeout: ${msg}`}));
-              this.removeCollection(this.collDir);
+              this.removeCollectionAndProfile(this.collDir);
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
               logger.error("Page Load Timeout, skipping page", {msg, ...logDetails});
@@ -1259,7 +1284,7 @@ export class Crawler {
         } else {
           if (failCrawlOnError) {
             await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, message: `Seed Page Load Error: ${msg}`}));
-            this.removeCollection(this.collDir);
+            this.removeCollectionAndProfile(this.collDir);
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
             logger.error("Page Load Error, skipping page", {msg, ...logDetails});
