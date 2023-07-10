@@ -907,8 +907,6 @@ export class Crawler {
     // delete profiles
     const deleteProfiles = () => {
       const directory = "/tmp";
-      const pattern = /^profile-/;
-    
       try {
         const files = fs.readdirSync(directory);
     
@@ -916,8 +914,7 @@ export class Crawler {
           const filePath = `${directory}/${file}`;
     
           const stats = fs.statSync(filePath);
-    
-          if (stats.isDirectory() && pattern.test(file)) {
+          if (stats.isDirectory() && file.startsWith("profile-")) {
             fs.rmdirSync(filePath, { recursive: true });
             logger.info("Deleted directory:", filePath);
           }
