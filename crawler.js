@@ -335,8 +335,6 @@ export class Crawler {
   }
 
   async run() {
-
-
     let status;
     let exitCode = 0;
 
@@ -366,7 +364,7 @@ export class Crawler {
       }
     } catch(e) {
       logger.error("Crawl failed", e);
-      exitCode = 9;
+      exitCode = 1;
       status = "failing";
       if (await this.crawlState.incFailCount()) {
         status = "failed";

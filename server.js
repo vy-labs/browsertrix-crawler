@@ -1,49 +1,68 @@
-import express from "express";
-import bodyParser from "body-parser";
 import child_process from "child_process";
 import yaml from "js-yaml";
 import fs from "fs";
-
-const app = express();
-const port = 3000;
-
-app.use(bodyParser.json());
+import md5 from "md5";
+import { v4 as uuidv4 } from "uuid";
+import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
+import {logger} from "./util/logger.js";
+import {sleep} from "./util/timing.js";
+import {RedisHelper} from "./util/redisHelper.js";
 
 let crawlProcess = null;
 let fixedArgs = createArgsFromYAML();
+const MAX_REDIS_TRIES = 3;
+const EVENT_QUEUE = "test_queue:start_urls";
 
-app.post("/crawl", (req, res) => {
-  try {
-    const reqDict = {...req.body};
-    const requiredKeys = ["url", "collection", "id", "domain", "level", "retry"];
-    const missingKeys = requiredKeys.filter((key) => !(key in reqDict));
-    if (missingKeys.length === 0) {
-      const args = [
-        "--url", reqDict.url,
-        "--domain", reqDict.domain,
-        "--level", reqDict.level,
-        "--collection", String(reqDict.collection),
-        "--id", String(reqDict.id),
-        "--retry", reqDict.retry
-      ];
-      args.push(...fixedArgs);
+(async function() {
+  const redisHelper = await getBroadCrawlRedisHelper();
 
-      crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
-      res.status(200).json({info: `${reqDict.url} crawl finished`});
-    } else {
-      res.status(404).json({error: `Ensure that ${requiredKeys.join(". ")} is present as keys in json`});
+  while(true){
+    console.log("Here");
+    let event = null;
+    try {
+      event = JSON.parse(await redisHelper.getEventFromQueue(EVENT_QUEUE));
+      if(event === null) {
+        process.exit(1);
+      }
+    } catch (err) {
+      console.log(err.message);
+      continue;
     }
-  } catch (e) {
-    res.status(500).json({error: e.message});
+
+    const url = event.url;
+    const level = event.level;
+    const domain = event.domain;
+    console.log(url);
+    const retry = event.retry || 0;
+    const collection = md5(url);
+    const crawlId = uuidv4();
+
+    await redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({
+      url: url,
+      event: "CRAWL_PROCESSING",
+      domain: domain,
+      level: level,
+      retry: retry
+    }));
+
+    const args = [
+      "--url", url,
+      "--domain", domain,
+      "--level", level,
+      "--collection", String(collection),
+      "--id", String(crawlId),
+      "--retry", retry
+    ];
+    args.push(...fixedArgs);
+    crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
+    const status = crawlProcess.status;
+    if(status === 0){
+      console.log(`crawl success, url: ${url} domain: ${domain}`);
+    } else {
+      console.log(`crawl failed, url: ${url} domain: ${domain}`);
+    }
   }
-
-});
-
-
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-});
-
+})();
 
 // Handle SIGTSTP signal (Ctrl+Z)
 process.on("SIGTSTP", () => {
@@ -62,4 +81,23 @@ function createArgsFromYAML(){
     args.push(`--${key}`, value);
   });
   return args;
+}
+
+async function getBroadCrawlRedisHelper(){
+  let broadCrawlRedis;
+  let redis_tries = 0;
+  while (true) {
+    try {
+      broadCrawlRedis = await initBroadCrawlRedis();
+      redis_tries = redis_tries + 1;
+      break;
+    } catch (e) {
+      if(redis_tries >= MAX_REDIS_TRIES) {
+        logger.fatal("unable to connect to broad crawl redis");
+      }
+      logger.warn("Waiting for redis at broad crawl", {}, "state");
+      await sleep(3);
+    }
+  }
+  return new RedisHelper(broadCrawlRedis);
 }

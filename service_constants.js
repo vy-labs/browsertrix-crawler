@@ -1,0 +1,1 @@
+export const REDIS_EVENT_TIMEOUT_SECONDS = 120;
