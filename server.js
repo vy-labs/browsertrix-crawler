@@ -7,6 +7,7 @@ import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
 import {logger} from "./util/logger.js";
 import {sleep} from "./util/timing.js";
 import {RedisHelper} from "./util/redisHelper.js";
+import {fetchInstanceId} from "./util/ec2Util.js";
 
 let crawlProcess = null;
 let fixedArgs = createArgsFromYAML();
@@ -32,7 +33,6 @@ const EVENT_QUEUE = "test_queue:start_urls";
     const url = event.url;
     const level = event.level;
     const domain = event.domain;
-    console.log(url);
     const retry = event.retry || 0;
     const collection = md5(url);
     const crawlId = uuidv4();
@@ -42,7 +42,9 @@ const EVENT_QUEUE = "test_queue:start_urls";
       event: "CRAWL_PROCESSING",
       domain: domain,
       level: level,
-      retry: retry
+      retry: retry,
+      crawlId: crawlId,
+      instance_id: fetchInstanceId() || "dev-testing"
     }));
 
     const args = [

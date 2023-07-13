@@ -13,3 +13,6 @@ services:
         ports:
           - "3000:3000"
         shm_size: 1gb
+#        env_file:
+#          - .env
+#        command: "node /app/server.js"
