@@ -36,6 +36,7 @@ import {RedisHelper} from "./util/redisHelper.js";
 import {is_valid_link} from "./util/seedHelper.js";
 import {initBroadCrawlRedis} from "./util/broadCrawlRedis.js";
 import AWS from "aws-sdk";
+import {fetchInstanceId} from "./util/ec2Util.js";
 
 
 const HTTPS_AGENT = HTTPSAgent({
@@ -146,6 +147,7 @@ export class Crawler {
     this.browser = new Browser();
     this.MAX_REDIS_TRIES = 3;
     this.redirection_string = null;
+    this.instance_id = fetchInstanceId() || "dev-testing";
   }
 
   configureUA() {
@@ -349,7 +351,8 @@ export class Crawler {
           level: this.params.level,
           s3Path: this.s3FilePath,
           retry: this.params.retry,
-          redirection_chain: this.redirection_string
+          redirection_chain: this.redirection_string,
+          instance_id: this.instance_id
         }));
       }else{
         await this.redisHelper.pushEventToQueue("crawlStatus", JSON.stringify({
@@ -358,7 +361,8 @@ export class Crawler {
           domain: this.params.domain,
           level: this.params.level,
           message: "Crawl interrupted. Please check logs for a detailed reason.",
-          retry: this.params.retry
+          retry: this.params.retry,
+          instance_id: this.instance_id
         }));
       }
     } catch(e) {
@@ -374,7 +378,8 @@ export class Crawler {
         domain: this.params.domain,
         level: this.params.level,
         message: "Crawl interrupted. Please check logs for a detailed reason.",
-        retry: this.params.retry
+        retry: this.params.retry,
+        instance_id: this.instance_id
       }));
 
     } finally {
