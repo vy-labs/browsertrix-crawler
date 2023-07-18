@@ -8,7 +8,8 @@ import {logger} from "./util/logger.js";
 import {sleep} from "./util/timing.js";
 import {RedisHelper} from "./util/redisHelper.js";
 import {fetchInstanceId} from "./util/ec2Util.js";
-import { promisify } from 'util';
+import { promisify } from "util";
+import {REDIS_EVENT_TIMEOUT_SECONDS} from "./service_constants.js";
 
 let crawlProcess = null;
 let fixedArgs = createArgsFromYAML();
@@ -28,9 +29,9 @@ const EVENT_QUEUE = "test_queue:start_urls";
     const lockKey = `lock:${lockName}`;
     const lockTimeout = parseInt(timeout);
 
-    console.log("trying to acquire lock")
-    const result = await acquireLockAsync(lockKey, identifier, 'NX', 'EX', lockTimeout);
-    if (result === 'OK') {
+    logger.info("trying to acquire lock");
+    const result = await acquireLockAsync(lockKey, identifier, "NX", "EX", lockTimeout);
+    if (result === "OK") {
       return identifier;
     } else {
       return null;
@@ -52,29 +53,29 @@ const EVENT_QUEUE = "test_queue:start_urls";
   while(true){
     let event = null;
     try {
-      const identifier = await acquireLock('myLock', 120);
+      const identifier = await acquireLock("myLock", REDIS_EVENT_TIMEOUT_SECONDS);
       if (identifier) {
-        console.log('Lock acquired with identifier:', identifier);
+        logger.info("Lock acquired with identifier:", identifier);
         try {
           event = JSON.parse(await redisHelper.getEventFromQueue(EVENT_QUEUE));
           if(event === null) {
             process.exit(1);
           }
         } catch (err) {
-          console.log(err.message);
+          logger.error(err.message);
           continue;
         }
-        const released = await releaseLock('myLock', identifier);
+        const released = await releaseLock("myLock", identifier);
         if (released) {
-          console.log('Lock released');
+          logger.info("Lock released");
         } else {
-          console.error('Failed to release lock');
+          logger.error("Failed to release lock");
         }
       } else {
-        console.error('Failed to acquire lock');
+        logger.error("Failed to acquire lock");
       }
     } catch (err) {
-      console.error('Error:', err);
+      logger.error("Error:", err);
     }
 
     if(event === null){
@@ -87,8 +88,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
     const retry = event.retry || 0;
     const collection = md5(url);
     const crawlId = uuidv4();
-    const crawlVersion = process.env.CRAWL_VERSION
-    console.log("preparing to crawl")
+    const crawlVersion = process.env.CRAWL_VERSION;
 
     await redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({
       url: url,
