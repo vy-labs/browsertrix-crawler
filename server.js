@@ -87,6 +87,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
     const retry = event.retry || 0;
     const collection = md5(url);
     const crawlId = uuidv4();
+    const crawlVersion = process.env.CRAWL_VERSION
     console.log("preparing to crawl")
 
     await redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({
@@ -95,7 +96,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
       domain: domain,
       level: level,
       retry: retry,
-      crawlId: crawlId,
+      crawlVersion: crawlVersion,
       instance_id: fetchInstanceId() || "dev-testing"
     }));
 
@@ -105,7 +106,8 @@ const EVENT_QUEUE = "test_queue:start_urls";
       "--level", level,
       "--collection", String(collection),
       "--id", String(crawlId),
-      "--retry", retry
+      "--retry", retry,
+      "--crawlVersion", crawlVersion
     ];
     args.push(...fixedArgs);
     crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
