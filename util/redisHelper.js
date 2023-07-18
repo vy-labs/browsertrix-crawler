@@ -7,6 +7,10 @@ export class RedisHelper{
     this.redis = redis;
   }
 
+  redisClient(){
+    return this.redis;
+  }
+
   async pushEventToQueue(queueName, event) {
     try {
       await this.redis.rpush(queueName, event);
