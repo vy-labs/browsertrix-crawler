@@ -1327,16 +1327,14 @@ export class Crawler {
     logger.debug("Extracting links");
     for (const opts of selectorOptsList) {
       const links = await this.extractLinks(page, data.filteredFrames, opts, logDetails);
-      const parsedLinks = [];
       for(const link of links) {
         if(is_valid_link(page.url(), link) === false) continue;
         const parsedLink = new URL(link.trim());
-        if (parsedLink !== null) {
+        if (parsedLink !== null && parsedLink.url !== "") {
           await this.redisHelper.pushEventToQueue("extractedUrls",JSON.stringify({link: parsedLink, event: "ADD_URL", domain: this.params.domain, level: this.params.level + 1}));
-          parsedLinks.push(parsedLink);
         }
       }
-      await this.queueInScopeUrls(seedId, parsedLinks, depth, extraHops, logDetails);
+      await this.queueInScopeUrls(seedId, links, depth, extraHops, logDetails);
     }
   }
 

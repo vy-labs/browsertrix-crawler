@@ -27,3 +27,4 @@ server:
   timeout: 30
   behaviorTimeout: 30
   logging: stats,pywb
+  text: true
