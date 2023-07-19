@@ -50,6 +50,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
   }
 
   while(true){
+    await sleep(2);
     let event = null;
     try {
       const identifier = await acquireLock('myLock', 120);
