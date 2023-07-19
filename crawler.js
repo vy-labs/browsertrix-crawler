@@ -1250,7 +1250,7 @@ export class Crawler {
       const statusCode = resp.status();
       if (statusCode.toString().startsWith("4") || statusCode.toString().startsWith("5")) {
         if (failCrawlOnError) {
-          await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, crawlVersion: this.params.crawlVersion, message: `Seed Page Load Error, status code: ${statusCode}`}));
+          await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, level: this.params.level, retry: this.params.retry, crawlVersion: this.params.crawlVersion, instance_id: this.instance_id, message: `Seed Page Load Error, status code: ${statusCode}`}));
           this.removeCollectionAndProfile(this.collDir);
           logger.fatal("Seed Page Load Error, failing crawl", {statusCode, ...logDetails}, "general", statusCode);
         } else {
@@ -1272,7 +1272,7 @@ export class Crawler {
         if (e.name === "TimeoutError") {
           if (data.loadState !== LoadState.CONTENT_LOADED) {
             if (failCrawlOnError) {
-              await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, crawlVersion: this.params.crawlVersion, message: `Seed Page Load Timeout: ${msg}`}));
+              await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, crawlVersion: this.params.crawlVersion, instance_id: this.instance_id, message: `Seed Page Load Timeout: ${msg}`}));
               this.removeCollectionAndProfile(this.collDir);
               logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
             } else {
@@ -1285,7 +1285,7 @@ export class Crawler {
           }
         } else {
           if (failCrawlOnError) {
-            await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, crawlVersion: this.params.crawlVersion, message: `Seed Page Load Error: ${msg}`}));
+            await this.redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({url: this.params.url[0], event: "CRAWL_FAIL", domain: this.params.domain, retry: this.params.retry, level: this.params.level, crawlVersion: this.params.crawlVersion, instance_id: this.instance_id, message: `Seed Page Load Error: ${msg}`}));
             this.removeCollectionAndProfile(this.collDir);
             logger.fatal("Seed Page Load Timeout, failing crawl", {msg, ...logDetails});
           } else {
