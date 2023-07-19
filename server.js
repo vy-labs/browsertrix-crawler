@@ -8,6 +8,8 @@ import {logger} from "./util/logger.js";
 import {sleep} from "./util/timing.js";
 import {RedisHelper} from "./util/redisHelper.js";
 import {fetchInstanceId} from "./util/ec2Util.js";
+import { promisify } from "util";
+import {REDIS_EVENT_TIMEOUT_SECONDS} from "./service_constants.js";
 
 let crawlProcess = null;
 let fixedArgs = createArgsFromYAML();
@@ -16,17 +18,68 @@ const EVENT_QUEUE = "test_queue:start_urls";
 
 (async function() {
   const redisHelper = await getBroadCrawlRedisHelper();
+  const redisClient = redisHelper.redisClient();
+  const acquireLockAsync = promisify(redisClient.set).bind(redisClient);
+  const releaseLockAsync = promisify(redisClient.del).bind(redisClient);
+  const getLockAsync = promisify(redisClient.get).bind(redisClient);
+
+
+  async function acquireLock(lockName, timeout) {
+    const identifier = Math.random().toString(36).slice(2);
+    const lockKey = `lock:${lockName}`;
+    const lockTimeout = parseInt(timeout);
+
+    logger.info("trying to acquire lock");
+    const result = await acquireLockAsync(lockKey, identifier, "NX", "EX", lockTimeout);
+    if (result === "OK") {
+      return identifier;
+    } else {
+      return null;
+    }
+  }
+
+  async function releaseLock(lockName, identifier) {
+    const lockKey = `lock:${lockName}`;
+    const result = await getLockAsync(lockKey);
+
+    if (result === identifier) {
+      await releaseLockAsync(lockKey);
+      return true;
+    } else {
+      return false;
+    }
+  }
 
   while(true){
-    console.log("Here");
+    await sleep(2);
     let event = null;
     try {
-      event = JSON.parse(await redisHelper.getEventFromQueue(EVENT_QUEUE));
-      if(event === null) {
-        process.exit(1);
+      const identifier = await acquireLock("myLock", REDIS_EVENT_TIMEOUT_SECONDS);
+      if (identifier) {
+        logger.info("Lock acquired with identifier:", identifier);
+        try {
+          event = JSON.parse(await redisHelper.getEventFromQueue(EVENT_QUEUE));
+          if(event === null) {
+            process.exit(1);
+          }
+        } catch (err) {
+          logger.error(err.message);
+          continue;
+        }
+        const released = await releaseLock("myLock", identifier);
+        if (released) {
+          logger.info("Lock released");
+        } else {
+          logger.error("Failed to release lock");
+        }
+      } else {
+        logger.error("Failed to acquire lock");
       }
     } catch (err) {
-      console.log(err.message);
+      logger.error("Error:", err);
+    }
+
+    if(event === null){
       continue;
     }
 
@@ -36,6 +89,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
     const retry = event.retry || 0;
     const collection = md5(url);
     const crawlId = uuidv4();
+    const crawlVersion = process.env.CRAWL_VERSION;
 
     await redisHelper.pushEventToQueue("crawlStatus",JSON.stringify({
       url: url,
@@ -43,7 +97,7 @@ const EVENT_QUEUE = "test_queue:start_urls";
       domain: domain,
       level: level,
       retry: retry,
-      crawlId: crawlId,
+      crawlVersion: crawlVersion,
       instance_id: fetchInstanceId() || "dev-testing"
     }));
 
@@ -53,7 +107,8 @@ const EVENT_QUEUE = "test_queue:start_urls";
       "--level", level,
       "--collection", String(collection),
       "--id", String(crawlId),
-      "--retry", retry
+      "--retry", retry,
+      "--crawlVersion", crawlVersion
     ];
     args.push(...fixedArgs);
     crawlProcess = child_process.spawnSync("crawl", args, {stdio: "inherit"});
